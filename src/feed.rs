@@ -1,17 +1,8 @@
-use crate::data_generator::ItchOrder;
-use rtrb::Producer;
-
-pub struct FeedHandler {
-    data_tx: Producer<ItchOrder>,
+pub trait FeedProducer {
+    type Item;
+    fn send(&mut self, item: Self::Item);
 }
 
-impl FeedHandler {
-    pub fn new(data_tx: Producer<ItchOrder>) -> Self {
-        Self { data_tx }
-    }
-
-    pub fn send_order(&mut self, order: ItchOrder) {
-        // ToDo: Handle the push error gracefully.
-        self.data_tx.push(order).ok();
-    }
+pub trait FeedConsumer {
+    fn recv(&mut self);
 }

@@ -1,3 +1,6 @@
+use crate::feed::FeedProducer;
+use zerocopy::{FromBytes, IntoBytes};
+
 #[derive(Debug)]
 pub enum ItchOrder {
     Add(ItchAddOrderMsg),
@@ -5,8 +8,8 @@ pub enum ItchOrder {
     Cancel(ItchOrderCancelMsg),
     Delete(ItchOrderDeleteMsg),
 }
-
-#[derive(Default, Debug)]
+#[repr(C, packed)]
+#[derive(Default, Debug, IntoBytes, FromBytes)]
 pub struct ItchAddOrderMsg {
     pub msg_type: u8,           // 1 byte:  'A'
     pub stock_locate: u16,      // 2 bytes: Big-endian stock locate code
@@ -18,7 +21,8 @@ pub struct ItchAddOrderMsg {
     pub price: u32,             // 4 bytes: Price (4 decimal places)
 } // Total = 36 bytes
 
-#[derive(Default, Debug)]
+#[repr(C, packed)]
+#[derive(Default, Debug, IntoBytes, FromBytes)]
 pub struct ItchOrderExecutedMsg {
     pub msg_type: u8,         // 1 byte: 'E'
     pub stock_locate: u16,    // 2 bytes
@@ -29,7 +33,8 @@ pub struct ItchOrderExecutedMsg {
     pub match_number: u64,    // 8 bytes: Unique match/trade ID
 } // Total 31 bytes
 
-#[derive(Default, Debug)]
+#[repr(C, packed)]
+#[derive(Default, Debug, IntoBytes, FromBytes)]
 pub struct ItchOrderCancelMsg {
     pub msg_type: u8,         // 1 byte: 'X'
     pub stock_locate: u16,    // 2 bytes
@@ -39,7 +44,8 @@ pub struct ItchOrderCancelMsg {
     pub canceled_shares: u32, // 4 bytes: Number of shares removed
 } // Total: 22 bytes
 
-#[derive(Default, Debug)]
+#[repr(C, packed)]
+#[derive(Default, Debug, IntoBytes, FromBytes)]
 pub struct ItchOrderDeleteMsg {
     pub msg_type: u8,         // 1 byte: 'D'
     pub stock_locate: u16,    // 2 bytes
@@ -48,12 +54,15 @@ pub struct ItchOrderDeleteMsg {
     pub order_reference: u64, // 8 bytes: The order being wiped out
 } // Total: 18 bytes
 
-pub struct DataGenerator {}
+pub struct DataGenerator<T: FeedProducer> {
+    feed_intake: T,
+}
 
-impl DataGenerator {
-    pub fn run() {}
-
-    pub fn generate_orders() {}
+impl<T: FeedProducer<Item = ItchOrder>> DataGenerator<T> {
+    pub fn run(&mut self, num_order: usize) {
+        self.feed_intake
+            .send(ItchOrder::Add(Self::generate_add_order()))
+    }
 
     pub fn generate_add_order() -> ItchAddOrderMsg {
         ItchAddOrderMsg::default()
