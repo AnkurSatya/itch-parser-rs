@@ -1,7 +1,10 @@
-use crate::feed::FeedProducer;
+use rand::prelude::*;
+use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 use zerocopy::{FromBytes, IntoBytes};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, EnumIter)]
 pub enum ItchOrder {
     Add(ItchAddOrderMsg),
     Executed(ItchOrderExecutedMsg),
@@ -9,7 +12,7 @@ pub enum ItchOrder {
     Delete(ItchOrderDeleteMsg),
 }
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes)]
+#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
 pub struct ItchAddOrderMsg {
     pub msg_type: u8,           // 1 byte:  'A'
     pub stock_locate: u16,      // 2 bytes: Big-endian stock locate code
@@ -22,7 +25,7 @@ pub struct ItchAddOrderMsg {
 } // Total = 36 bytes
 
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes)]
+#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
 pub struct ItchOrderExecutedMsg {
     pub msg_type: u8,         // 1 byte: 'E'
     pub stock_locate: u16,    // 2 bytes
@@ -34,7 +37,7 @@ pub struct ItchOrderExecutedMsg {
 } // Total 31 bytes
 
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes)]
+#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
 pub struct ItchOrderCancelMsg {
     pub msg_type: u8,         // 1 byte: 'X'
     pub stock_locate: u16,    // 2 bytes
@@ -45,7 +48,7 @@ pub struct ItchOrderCancelMsg {
 } // Total: 22 bytes
 
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes)]
+#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
 pub struct ItchOrderDeleteMsg {
     pub msg_type: u8,         // 1 byte: 'D'
     pub stock_locate: u16,    // 2 bytes
@@ -54,14 +57,28 @@ pub struct ItchOrderDeleteMsg {
     pub order_reference: u64, // 8 bytes: The order being wiped out
 } // Total: 18 bytes
 
-pub struct DataGenerator<T: FeedProducer> {
-    feed_intake: T,
-}
+pub struct DataGenerator;
 
-impl<T: FeedProducer<Item = ItchOrder>> DataGenerator<T> {
-    pub fn run(&mut self, num_order: usize) {
-        self.feed_intake
-            .send(ItchOrder::Add(Self::generate_add_order()))
+impl DataGenerator {
+    pub fn bulk_generate_random(
+        order_type: Option<ItchOrder>,
+        n: usize,
+        seed: Option<u64>,
+    ) -> Vec<ItchOrder> {
+        // For now, we are just using the default value for all the variants on ItchOrder,
+        // so all the orders of the same variant will be exactly the same.
+        if let Some(order_type) = order_type {
+            vec![order_type; n]
+        } else {
+            let mut orders = Vec::with_capacity(n);
+            let seed = seed.unwrap_or_default();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+            for _ in 0..n {
+                orders.push(ItchOrder::iter().choose(&mut rng).unwrap());
+            }
+            orders
+        }
     }
 
     pub fn generate_add_order() -> ItchAddOrderMsg {

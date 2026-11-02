@@ -14,7 +14,7 @@ impl SpscConsumer {
 
 impl FeedConsumer for SpscConsumer {
     fn recv(&mut self) {
-        self.data_rx.peek();
+        self.data_rx.peek().ok();
     }
 }
 // ToDo: Implement criterion yourself so that proper checking can be done.

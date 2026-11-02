@@ -4,5 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+log = "0.4.35"
+rand = "0.10.3"
+rand_chacha = "0.10.0"
 rtrb = "0.4.0"
-zerocopy = { version= "0.8.63", features = ["derive"] }
+strum = "0.28.0"
+strum_macros = "0.28.0"
+zerocopy = { version = "0.8.63", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "consumer_producer_bench"
+harness = false

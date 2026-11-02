@@ -16,6 +16,6 @@ impl FeedProducer for SpscProducer {
     type Item = ItchOrder;
 
     fn send(&mut self, item: Self::Item) {
-        self.data_tx.push(item);
+        self.data_tx.push(item).ok();
     }
 }
