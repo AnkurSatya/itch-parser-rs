@@ -2,7 +2,10 @@ use rand::prelude::*;
 use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-use zerocopy::{FromBytes, IntoBytes};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
+
+pub const ITCH_MAX_MSG_SIZE: usize = 36; // bytes
+pub type ItchFrame = [u8; ITCH_MAX_MSG_SIZE];
 
 #[derive(Debug, Clone, Copy, EnumIter)]
 pub enum ItchOrder {
@@ -11,8 +14,22 @@ pub enum ItchOrder {
     Cancel(ItchOrderCancelMsg),
     Delete(ItchOrderDeleteMsg),
 }
+
+impl ItchOrder {
+    pub fn to_frame(&self) -> ItchFrame {
+        let mut frame = [0u8; ITCH_MAX_MSG_SIZE];
+        let bytes = match self {
+            ItchOrder::Add(order) => order.as_bytes(),
+            ItchOrder::Cancel(order) => order.as_bytes(),
+            ItchOrder::Executed(order) => order.as_bytes(),
+            ItchOrder::Delete(order) => order.as_bytes(),
+        };
+        frame[..bytes.len()].copy_from_slice(bytes);
+        frame
+    }
+}
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
+#[derive(Debug, IntoBytes, FromBytes, Clone, Copy, Immutable, KnownLayout)]
 pub struct ItchAddOrderMsg {
     pub msg_type: u8,           // 1 byte:  'A'
     pub stock_locate: u16,      // 2 bytes: Big-endian stock locate code
@@ -24,8 +41,14 @@ pub struct ItchAddOrderMsg {
     pub price: u32,             // 4 bytes: Price (4 decimal places)
 } // Total = 36 bytes
 
+impl Default for ItchAddOrderMsg {
+    fn default() -> Self {
+        Self { msg_type: b'A', ..Self::new_zeroed() }
+    }
+}
+
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
+#[derive(Debug, IntoBytes, FromBytes, Clone, Copy, Immutable, KnownLayout)]
 pub struct ItchOrderExecutedMsg {
     pub msg_type: u8,         // 1 byte: 'E'
     pub stock_locate: u16,    // 2 bytes
@@ -36,8 +59,14 @@ pub struct ItchOrderExecutedMsg {
     pub match_number: u64,    // 8 bytes: Unique match/trade ID
 } // Total 31 bytes
 
+impl Default for ItchOrderExecutedMsg {
+    fn default() -> Self {
+        Self { msg_type: b'E', ..Self::new_zeroed() }
+    }
+}
+
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
+#[derive(Debug, IntoBytes, FromBytes, Clone, Copy, Immutable, KnownLayout)]
 pub struct ItchOrderCancelMsg {
     pub msg_type: u8,         // 1 byte: 'X'
     pub stock_locate: u16,    // 2 bytes
@@ -47,8 +76,14 @@ pub struct ItchOrderCancelMsg {
     pub canceled_shares: u32, // 4 bytes: Number of shares removed
 } // Total: 22 bytes
 
+impl Default for ItchOrderCancelMsg {
+    fn default() -> Self {
+        Self { msg_type: b'X', ..Self::new_zeroed() }
+    }
+}
+
 #[repr(C, packed)]
-#[derive(Default, Debug, IntoBytes, FromBytes, Clone, Copy)]
+#[derive(Debug, IntoBytes, FromBytes, Clone, Copy, Immutable, KnownLayout)]
 pub struct ItchOrderDeleteMsg {
     pub msg_type: u8,         // 1 byte: 'D'
     pub stock_locate: u16,    // 2 bytes
@@ -56,6 +91,12 @@ pub struct ItchOrderDeleteMsg {
     pub timestamp: [u8; 6],   // 6 bytes
     pub order_reference: u64, // 8 bytes: The order being wiped out
 } // Total: 18 bytes
+
+impl Default for ItchOrderDeleteMsg {
+    fn default() -> Self {
+        Self { msg_type: b'D', ..Self::new_zeroed() }
+    }
+}
 
 pub struct DataGenerator;
 
@@ -79,6 +120,19 @@ impl DataGenerator {
             }
             orders
         }
+    }
+
+    pub fn bulk_generate_random_frames(
+        order_type: Option<ItchOrder>,
+        n: usize,
+        seed: Option<u64>,
+    ) -> Vec<ItchFrame> {
+        let mut frames = Vec::with_capacity(n);
+        let orders = Self::bulk_generate_random(order_type, n, seed);
+        for order in orders {
+            frames.push(order.to_frame());
+        }
+        frames
     }
 
     pub fn generate_add_order() -> ItchAddOrderMsg {

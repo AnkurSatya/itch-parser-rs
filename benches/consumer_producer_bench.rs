@@ -1,7 +1,9 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{
+    BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::WallTime,
+};
 use feed_handler::{
     consumer::spsc::SpscConsumer,
-    data_generator::{self, ItchOrder},
+    data_generator::{DataGenerator, ItchFrame, ItchOrder},
     feed::{FeedConsumer, FeedProducer},
     producer::spsc::SpscProducer,
 };
@@ -15,80 +17,63 @@ use std::{
             Ordering::{Acquire, Release},
         },
     },
-    thread::{self},
+    thread,
 };
 
-fn bench_spsc_throughput(c: &mut Criterion) {
-    let mut spsc_ring_buffer_group = c.benchmark_group("spsc_ring_buffer");
-    const RING_BUFFER_CAPACITY: usize = 131072;
-    const BATCH_SIZE: usize = 300_000;
-    const RANDOM_SEED: u64 = 20;
-    spsc_ring_buffer_group.throughput(criterion::Throughput::Elements(BATCH_SIZE as u64));
+const RING_BUFFER_CAPACITY: usize = 524_288;
+const BATCH_SIZE: usize = 300_000;
+const RANDOM_SEED: u64 = 20;
 
+fn run_spsc_bench<T>(group: &mut BenchmarkGroup<WallTime>, name: &str, frames: Arc<Vec<ItchFrame>>)
+where
+    T: Send + 'static,
+    SpscProducer<T>: FeedProducer<Item = ItchFrame>,
+    SpscConsumer<T>: FeedConsumer,
+{
     let barrier = Arc::new(Barrier::new(3));
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let (producer, consumer) = RingBuffer::<T>::new(RING_BUFFER_CAPACITY);
 
-    // static FLAG_THREAD_START_ACTIVITY: AtomicBool = AtomicBool::new(false);
-
-    let (producer_handle, consumer_handle) = {
-        let (producer, consumer) = RingBuffer::<ItchOrder>::new(RING_BUFFER_CAPACITY);
-
-        let setup_data = data_generator::DataGenerator::bulk_generate_random(
-            None,
-            BATCH_SIZE,
-            Some(RANDOM_SEED),
-        );
-
-        let producer_handle = {
-            let barrier = Arc::clone(&barrier);
-            let stop_flag = Arc::clone(&stop_flag);
-            thread::spawn(move || {
-                let mut tx = SpscProducer::new(producer);
-                loop {
-                    barrier.wait();
-                    if stop_flag.load(Acquire) {
-                        break;
-                    }
-                    for item in &setup_data {
-                        tx.send(black_box(*item));
-                    }
-                    barrier.wait();
+    let producer_handle = {
+        let barrier = Arc::clone(&barrier);
+        let stop_flag = Arc::clone(&stop_flag);
+        let frames = Arc::clone(&frames);
+        thread::spawn(move || {
+            let mut tx = SpscProducer::<T>::new(producer);
+            loop {
+                barrier.wait();
+                if stop_flag.load(Acquire) {
+                    break;
                 }
-            })
-        };
-
-        let consumer_handle = {
-            let barrier = Arc::clone(&barrier);
-            let stop_flag = Arc::clone(&stop_flag);
-
-            thread::spawn(move || {
-                let mut received_count = 0;
-                let mut rx = SpscConsumer::new(consumer);
-                loop {
-                    barrier.wait();
-                    if stop_flag.load(Acquire) {
-                        break;
-                    }
-                    while received_count < BATCH_SIZE {
-                        black_box(rx.recv());
-                        received_count += 1;
-                    }
-                    barrier.wait();
+                for frame in frames.iter() {
+                    tx.send(black_box(*frame));
                 }
-                // while !stop_flag.load(Acquire) {
-                //     std::hint::spin_loop();
-                // }
-                // while received_count < BATCH_SIZE {
-                //     black_box(rx.recv());
-                //     received_count += 1;
-                // }
-            })
-        };
-
-        (producer_handle, consumer_handle)
+                barrier.wait();
+            }
+        })
     };
 
-    spsc_ring_buffer_group.bench_function("push_peek_300k_messages", |b| {
+    let consumer_handle = {
+        let barrier = Arc::clone(&barrier);
+        let stop_flag = Arc::clone(&stop_flag);
+        thread::spawn(move || {
+            let mut rx = SpscConsumer::<T>::new(consumer);
+            loop {
+                barrier.wait();
+                if stop_flag.load(Acquire) {
+                    break;
+                }
+                let mut received = 0;
+                while received < BATCH_SIZE {
+                    black_box(rx.recv());
+                    received += 1;
+                }
+                barrier.wait();
+            }
+        })
+    };
+
+    group.bench_function(name, |b| {
         b.iter(|| {
             barrier.wait();
             barrier.wait();
@@ -99,21 +84,20 @@ fn bench_spsc_throughput(c: &mut Criterion) {
     barrier.wait();
     producer_handle.join().unwrap();
     consumer_handle.join().unwrap();
+}
 
-    // let routine = |producer_handle: JoinHandle<()>, consumer_handle: JoinHandle<()>| {
-    //     FLAG_THREAD_START_ACTIVITY.store(true, Release);
-    //     producer_handle.join().inspect_err(|e| error!("{e:?}")).ok();
-    //     consumer_handle.join().inspect_err(|e| error!("{e:?}")).ok();
-    //     FLAG_THREAD_START_ACTIVITY.store(false, Release);
-    // };
+fn bench_spsc_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("spsc_ring_buffer");
+    group.throughput(criterion::Throughput::Elements(BATCH_SIZE as u64));
 
-    // spsc_ring_buffer_group.bench_function("push_peek_300k_messages", |b| {
-    //     b.iter_batched(
-    //         || setup(),
-    //         |(producer_handle, consumer_handle)| routine(producer_handle, consumer_handle),
-    //         criterion::BatchSize::SmallInput,
-    //     )
-    // });
+    let frames = Arc::new(DataGenerator::bulk_generate_random_frames(
+        None,
+        BATCH_SIZE,
+        Some(RANDOM_SEED),
+    ));
+
+    run_spsc_bench::<ItchFrame>(&mut group, "option1_pop_byte_frame", Arc::clone(&frames));
+    run_spsc_bench::<ItchOrder>(&mut group, "option3_pop_typed_enum", frames);
 }
 
 criterion_group!(benches, bench_spsc_throughput);

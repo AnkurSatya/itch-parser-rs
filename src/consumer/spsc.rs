@@ -1,23 +1,66 @@
-use crate::data_generator::ItchOrder;
+use crate::data_generator::{
+    ItchAddOrderMsg, ItchFrame, ItchOrder, ItchOrderCancelMsg, ItchOrderDeleteMsg,
+    ItchOrderExecutedMsg,
+};
 use crate::feed::FeedConsumer;
 use rtrb::Consumer;
+use zerocopy::FromBytes;
 
-pub struct SpscConsumer {
-    data_rx: Consumer<ItchOrder>,
+pub struct SpscConsumer<T> {
+    data_rx: Consumer<T>,
 }
 
-impl SpscConsumer {
-    pub fn new(data_rx: Consumer<ItchOrder>) -> Self {
+impl<T> SpscConsumer<T> {
+    pub fn new(data_rx: Consumer<T>) -> Self {
         Self { data_rx }
     }
 }
 
-impl FeedConsumer for SpscConsumer {
+impl FeedConsumer for SpscConsumer<ItchOrder> {
     fn recv(&mut self) {
-        self.data_rx.peek().ok();
+        let _order = loop {
+            match self.data_rx.pop() {
+                Ok(o) => break o,
+                Err(_) => std::hint::spin_loop(),
+            }
+        };
     }
 }
-// ToDo: Implement criterion yourself so that proper checking can be done.
-// ToDo: Evalute all the criteria. Start with tail latency. Thing to measure is
-// time taken from just before the message is pushed to the queue to the point right
-// after receiver reads it.
+
+impl FeedConsumer for SpscConsumer<ItchFrame> {
+    fn recv(&mut self) {
+        let frame = loop {
+            match self.data_rx.pop() {
+                Ok(f) => break f,
+                Err(_) => std::hint::spin_loop(),
+            }
+        };
+        match frame[0] {
+            b'A' => {
+                let _order = ItchAddOrderMsg::ref_from_bytes(
+                    &frame[..std::mem::size_of::<ItchAddOrderMsg>()],
+                )
+                .unwrap();
+            }
+            b'E' => {
+                let _order = ItchOrderExecutedMsg::ref_from_bytes(
+                    &frame[..std::mem::size_of::<ItchOrderExecutedMsg>()],
+                )
+                .unwrap();
+            }
+            b'X' => {
+                let _order = ItchOrderCancelMsg::ref_from_bytes(
+                    &frame[..std::mem::size_of::<ItchOrderCancelMsg>()],
+                )
+                .unwrap();
+            }
+            b'D' => {
+                let _order = ItchOrderDeleteMsg::ref_from_bytes(
+                    &frame[..std::mem::size_of::<ItchOrderDeleteMsg>()],
+                )
+                .unwrap();
+            }
+            _ => {}
+        };
+    }
+}
